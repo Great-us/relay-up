@@ -1,14 +1,16 @@
-# Session Relay（relay-up）
+# Session Relay（relay-up）—— Kimi Code 版
+
+> **版本说明（2026-09-19）：** 本仓库是 **Kimi Code 版** —— 经 `kimi web` 本机服务器直推送达、一键 spawn 员工、全程无定时器。**ZCode 经典版**（值班 cron 唤醒 + 用户级 hooks）在 https://github.com/Great-us/relay-up-zcode
 
 **[English](README.md) | 简体中文**
 
-**一个领导，多个员工，多个模型——ZCode 会话间的全自动任务中继，推送直达。** 在任意项目敲 `/relay-up` 即装。领导派发任务卡与 chat 消息；送达走**推送**——经 Kimi Code 本机服务器（`kimi web`）直接注入员工存活会话，员工立即开轮执行，不等 cron 轮询。文件层（信箱 + 线程日志）仍是可审计的事实源；无服务器可达时，每次推送自动降级回值班 cron 路径。
+**一个领导，多个员工，多个模型——Kimi Code 会话间的全自动任务中继，推送直达。** 在任意项目敲 `/relay-up` 即装。领导派发任务卡与 chat 消息；送达走**推送**——经 Kimi Code 本机服务器（`kimi web`）直接注入员工存活会话，员工立即开轮执行，不等 cron 轮询。文件层（信箱 + 线程日志）仍是可审计的事实源；无服务器可达时，每次推送自动降级回值班 cron 路径。
 
 > 源自 Model Relay 项目 TASK-010/011 的实战：在一台 Windows 机器上用真实会话端到端验证了整条链路（事件 hook → 文件信箱 → 定时唤醒 → 验收归档），原文往返逐字哈希核对通过。新的推送车道已经过本机服务器实测探针：建会话 → 推送 → 模型回 PONG-OK → 归档。
 
 ## 它解决什么问题
 
-你在 ZCode 里开了好几个窗口（不同模型：贵的当领导、便宜的当员工）。让它们协作 ordinarily 要靠你人工复制粘贴。Session Relay 把“派工 → 执行 → 回报 → 审阅 → 再派工”变成全自动：
+你在 Kimi Code 里开了好几个会话（终端窗口或 `kimi web`），不同模型：贵的当领导、便宜的当员工。让它们协作 ordinarily 要靠你人工复制粘贴。Session Relay 把“派工 → 执行 → 回报 → 审阅 → 再派工”变成全自动：
 
 ```
 领导会话（任意模型）
@@ -75,7 +77,7 @@ body-sha256: <body 的 UTF-8 SHA256 hex>
 ## 快速开始
 
 1. **安装技能**：把本仓库整体放入用户级技能目录（Windows：`%USERPROFILE%\.agents\skills\relay-up\`）。
-2. **（可选，开启自动注入快路径）注册用户级 hooks**：在 `~/.zcode/cli/config.json` 顶层加入（详见 [hooks/relay_hook.py](hooks/relay_hook.py) 头注释）：
+2. **（可选，仅 ZCode 经典版适用）注册用户级 hooks**：按 [hooks/relay_hook.py](hooks/relay_hook.py) 头注释在 `~/.zcode/cli/config.json` 顶层注册。该自动注入快路径走 ZCode hook 协议，**现行 Kimi Code 不读取此配置**——Kimi Code 的送达靠推送（见第 4 步）：
 
    ```json
    "hooks": {
@@ -89,8 +91,8 @@ body-sha256: <body 的 UTF-8 SHA256 hex>
    ```
 
    未注册也不影响使用：推送送达、手动 `/relay-next` 与员工值班 cron 三条路径只依赖本机服务器 / 文件读写。v3 起**一份注册服务所有项目**——hook 按 `/relay-up` 写入的 `relay/relay.enabled` 标记自动路由。
-3. **启用**：在任意项目的 ZCode 窗口敲 `/relay-up`（撤除：`/relay-up down`）。
-4. **开员工窗**：新开 ZCode 窗口选个便宜模型，发任意一条消息唤醒，再按 `template/relay/bootstrap-card.example.json` 给它自举卡（装值班 cron、把自身会话身份回填进 `roles.json`；此后 hook 持续维护 `presence.json` / `session-registry.jsonl`）。登记后任务与消息**经推送即时直达**；5 分钟值班 cron 保留作无服务器兜底。**也可以不开窗**：`python tools/relay_spawn.py --root <根> --role employee-2 [--model kimi-code/kimi-for-coding-highspeed]` 直接现场 spawn server 托管员工（协议经实测，见 `template/relay/chat/CONTRACT.md` §员工会话 spawn 协议）。
+3. **启用**：在任意项目的 Kimi Code 会话敲 `/relay-up`（撤除：`/relay-up down`）。
+4. **开员工窗**：新开 Kimi Code 会话选个便宜模型，发任意一条消息唤醒，再按 `template/relay/bootstrap-card.example.json` 给它自举卡（装值班 cron、把自身会话身份回填进 `roles.json`；此后 hook 持续维护 `presence.json` / `session-registry.jsonl`）。登记后任务与消息**经推送即时直达**；5 分钟值班 cron 保留作无服务器兜底。**也可以不开窗**：`python tools/relay_spawn.py --root <根> --role employee-2 [--model kimi-code/kimi-for-coding-highspeed]` 直接现场 spawn server 托管员工（协议经实测，见 `template/relay/chat/CONTRACT.md` §员工会话 spawn 协议）。
 
 ## 安全设计（为什么敢让它无人值守）
 
@@ -137,7 +139,7 @@ check_template.py            # 模板完整性自检
 
 ## 已在真实环境验证的行为
 
-Stop hook 续接注入（`{"decision":"block"}` 平台接受）、UserPromptSubmit `additionalContext` 上下文注入、每自然轮 3 次续写上限、fail-open、cron 定时自醒、双车道合并注入、坏消息隔离（`*.bad`）、基于标记的多项目路由。推送车道已经过本机服务器实测探针（2026-09）：建会话 → 推送 → 模型回 PONG-OK → 归档，全程信封 `code=0`。完整 spawn 协议已于 2026-09-19 端到端实测：spawn → 直推派工 → 员工领卡执行 → 九字段回报 → 领导 `verify_report.py` 7/7 PASS → SHUTDOWN → 归档，全程无 cron 无 hook——含已固化进 `relay_spawn.py` 的实测怪癖（创建时 `agent_config` 被忽略、model/permission 分两次 profile、15 秒 settle、静默 ~90 秒后用同一 `msg_id` 重投）。测试套件覆盖以上全部逻辑层；平台行为以 2026-09 的 ZCode 真实会话实测为准。
+Stop hook 续接注入（`{"decision":"block"}` 平台接受）、UserPromptSubmit `additionalContext` 上下文注入、每自然轮 3 次续写上限、fail-open、cron 定时自醒、双车道合并注入、坏消息隔离（`*.bad`）、基于标记的多项目路由。推送车道已经过本机服务器实测探针（2026-09）：建会话 → 推送 → 模型回 PONG-OK → 归档，全程信封 `code=0`。完整 spawn 协议已于 2026-09-19 端到端实测：spawn → 直推派工 → 员工领卡执行 → 九字段回报 → 领导 `verify_report.py` 7/7 PASS → SHUTDOWN → 归档，全程无 cron 无 hook——含已固化进 `relay_spawn.py` 的实测怪癖（创建时 `agent_config` 被忽略、model/permission 分两次 profile、15 秒 settle、静默 ~90 秒后用同一 `msg_id` 重投）。测试套件覆盖以上全部逻辑层；hook 车道平台行为以 ZCode 真实会话实测为准（ZCode 时代），推送车道全部行为以 Kimi Code 真实会话实测为准（kimi 0.43.1，2026-09-19）。
 
 ## 限制与路线图
 

@@ -1,14 +1,16 @@
-# Session Relay (relay-up)
+# Session Relay (relay-up) — Kimi Code edition
+
+> **Version note (2026-09-19):** this is the **Kimi Code** line — push-first delivery over the `kimi web` local server, with one-command worker spawning and no timers. The **ZCode classic** edition (cron watcher wake-ups + user hooks) lives at https://github.com/Great-us/relay-up-zcode
 
 **[简体中文](README.zh-CN.md) | English**
 
-**One leader, multiple workers, multiple models — a fully automated task relay between ZCode sessions, with push-first delivery.** Type `/relay-up` in any project to install it. The leader dispatches task cards and chat messages; delivery is **push** — they go straight into the worker's live session through the Kimi Code local server (`kimi web`), and the worker starts executing immediately, no cron polling, no waiting. The file layer (mailbox + thread logs) remains the auditable source of truth, and every push degrades gracefully to the watcher-cron path when no server is reachable.
+**One leader, multiple workers, multiple models — a fully automated task relay between Kimi Code sessions, with push-first delivery.** Type `/relay-up` in any project to install it. The leader dispatches task cards and chat messages; delivery is **push** — they go straight into the worker's live session through the Kimi Code local server (`kimi web`), and the worker starts executing immediately, no cron polling, no waiting. The file layer (mailbox + thread logs) remains the auditable source of truth, and every push degrades gracefully to the watcher-cron path when no server is reachable.
 
 > Born out of real-world TASK-010/011 work: the entire chain (event hooks → file mailbox → scheduled wake-ups → acceptance & archival) was verified end-to-end with live sessions on a Windows machine, including verbatim hash-checked round trips. The new push lane was probe-verified against the live server: create session → push → model replied PONG-OK → archive.
 
 ## The problem it solves
 
-You have several ZCode windows open, each running a different model (an expensive one as the leader, cheap ones as workers). Making them collaborate normally means copy-pasting between windows by hand. Session Relay turns *dispatch → execute → report → review → dispatch* into a fully automated loop:
+You have several Kimi Code sessions open (terminal windows or `kimi web`), each running a different model (an expensive one as the leader, cheap ones as workers). Making them collaborate normally means copy-pasting between windows by hand. Session Relay turns *dispatch → execute → report → review → dispatch* into a fully automated loop:
 
 ```
 Leader session (any model)
@@ -75,7 +77,7 @@ body-sha256: <body 的 UTF-8 SHA256 hex>
 ## Quick start
 
 1. **Install the skill** — copy this repository into your user-level skills directory (Windows: `%USERPROFILE%\.agents\skills\relay-up\`, i.e. this folder as a whole).
-2. **(Optional — enables the auto-injection fast path) register user-level hooks** by adding to `~/.zcode/cli/config.json` (details in the header of [hooks/relay_hook.py](hooks/relay_hook.py)):
+2. **(Optional — ZCode classic edition only) register user-level hooks** in `~/.zcode/cli/config.json` as described in the header of [hooks/relay_hook.py](hooks/relay_hook.py). This auto-injection fast path speaks the ZCode hook protocol and is **not read by current Kimi Code builds** — Kimi Code delivery is push-based (step 4):
 
    ```json
    "hooks": {
@@ -89,8 +91,8 @@ body-sha256: <body 的 UTF-8 SHA256 hex>
    ```
 
    Without hooks everything still works — push delivery, manual `/relay-next` and the worker watcher cron only need the local server / plain file I/O. Since v3, one registration serves **all** projects: the hook routes by the `relay/relay.enabled` marker that `/relay-up` writes.
-3. **Enable** — type `/relay-up` in any project's ZCode window (disable: `/relay-up down`).
-4. **Open worker windows** — start a ZCode window on a cheap model, send it any one message to wake it, then hand it the bootstrap card from `template/relay/bootstrap-card.example.json` (it installs its own watcher cron and backfills `roles.json` with its session identity; the hook keeps `presence.json` / `session-registry.jsonl` current from then on). Once registered, task chats and messages reach it **instantly by push**; the 5-minute watcher cron stays installed as the no-server fallback. **Or skip the window entirely**: `python tools/relay_spawn.py --root <root> --role employee-2 [--model kimi-code/kimi-for-coding-highspeed]` spawns a server-managed worker on the spot (measured protocol, see `template/relay/chat/CONTRACT.md` §员工会话 spawn 协议).
+3. **Enable** — type `/relay-up` in any project's Kimi Code session (disable: `/relay-up down`).
+4. **Open worker windows** — start a Kimi Code session on a cheap model, send it any one message to wake it, then hand it the bootstrap card from `template/relay/bootstrap-card.example.json` (it installs its own watcher cron and backfills `roles.json` with its session identity; the hook keeps `presence.json` / `session-registry.jsonl` current from then on). Once registered, task chats and messages reach it **instantly by push**; the 5-minute watcher cron stays installed as the no-server fallback. **Or skip the window entirely**: `python tools/relay_spawn.py --root <root> --role employee-2 [--model kimi-code/kimi-for-coding-highspeed]` spawns a server-managed worker on the spot (measured protocol, see `template/relay/chat/CONTRACT.md` §员工会话 spawn 协议).
 
 ## Safety design (why it's safe to leave unattended)
 
@@ -138,7 +140,7 @@ check_template.py            # template integrity self-check
 
 ## Verified behaviors
 
-Stop-hook continuation injection (`{"decision":"block"}` accepted by the platform), `UserPromptSubmit` `additionalContext` context injection, the 3-continuations-per-turn cap, fail-open, cron self-wake, dual-lane merged injection, bad-message quarantine (`*.bad`), marker-based multi-project routing. The push lane was probe-verified against a live server (as of 2026-09): create session → push → model replied PONG-OK → archive, envelope `code=0` throughout. The full spawn protocol was verified end-to-end on 2026-09-19: spawn → push dispatch → worker claims and executes → 9-field report → leader `verify_report.py` 7/7 PASS → SHUTDOWN → archive, no cron and no hook in the loop — including the measured quirks now encoded in `relay_spawn.py` (`agent_config` ignored at creation, model/permission via two profile calls, 15 s settle, same-`msg_id` re-push after ~90 s of silence). The test suite covers all of the above at logic level; platform behaviors were verified against live ZCode sessions.
+Stop-hook continuation injection (`{"decision":"block"}` accepted by the platform), `UserPromptSubmit` `additionalContext` context injection, the 3-continuations-per-turn cap, fail-open, cron self-wake, dual-lane merged injection, bad-message quarantine (`*.bad`), marker-based multi-project routing. The push lane was probe-verified against a live server (as of 2026-09): create session → push → model replied PONG-OK → archive, envelope `code=0` throughout. The full spawn protocol was verified end-to-end on 2026-09-19: spawn → push dispatch → worker claims and executes → 9-field report → leader `verify_report.py` 7/7 PASS → SHUTDOWN → archive, no cron and no hook in the loop — including the measured quirks now encoded in `relay_spawn.py` (`agent_config` ignored at creation, model/permission via two profile calls, 15 s settle, same-`msg_id` re-push after ~90 s of silence). The test suite covers all of the above at logic level; hook-lane platform behaviors were verified against live ZCode sessions (ZCode era), and all push-lane behaviors against live Kimi Code sessions (kimi 0.43.1, 2026-09-19).
 
 ## Limitations & roadmap
 
