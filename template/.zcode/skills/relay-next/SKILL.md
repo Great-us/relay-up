@@ -65,3 +65,11 @@ hook 已替你领取任务卡（`relay/claimed/<task_id>.by-sess-<短标识>.jso
 - 值班 cron 唤醒轮：按第 0 步自查；无事则静默结束，不输出多余内容、不写任何文件。
 - 不确定的卡/消息：写 QUESTION 回报或 chat 询问 leader，不猜、不伪造完成。
 - 写入边界永远以卡内 `authorized_write_paths` + `relay/outbox/` + `relay/chat/`（仅经 chat_send.py）为限。
+
+## 【值班成本纪律】（2026-09-19 成本安全修订，优先级高于值班指令）
+
+- 值班 cron 轮若无事可做：静默结束，但**连续第 2 轮**空转起必须在结尾向用户显式报警"正在消耗 token"并给出停止选项（R4）。
+- 达到 loop-config.json `cost_safety.idle_downgrade_threshold`（默认2）轮连续空转：值班会话必须把自己（及所知同循环）的 cron 降频为每小时；达到 `idle_selfdelete_threshold`（默认4）轮：自删全部相关定时器（R1）。
+- 自删前必须先实际调用一次 CronDelete（dry-run 任一 id 之外的方式验证工具可用性）；不可用时立即升级用户，**禁止继续静默空转循环**（R3）。
+- 空闲侦测优先用脚本/hook 检查，确有待办才需要模型轮（R2）。过夜值守（用户离线时段）默认不开启，须用户明示（R5）。
+

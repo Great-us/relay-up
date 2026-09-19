@@ -97,3 +97,7 @@ Stop-hook continuation injection (`{"decision":"block"}` accepted by the platfor
 ## License
 
 MIT
+
+## Cost safety (since v2)
+
+Duty loops ship with anti-waste governance: after 2 consecutive idle rounds the watcher downgrades to hourly; after 4 it deletes all of its timers. Idle checks prefer scripts/hooks over model turns; overnight duty is off by default and must be enabled explicitly. Any session must verify its CronDelete tool actually works before relying on auto-deletion — otherwise it escalates to the user instead of idling silently. See the cost_safety block in the relay template runtime/loop-config.json.

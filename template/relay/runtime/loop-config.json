@@ -1,15 +1,23 @@
 {
   "version": 1,
   "updated_at": "<部署时填写UTC日期>",
-  "leader_interval_min": 10,
+  "leader_interval_min": 15,
   "employee_watcher": {
-    "title_pattern": "relay 取件值班-<短标识>（每5分钟）",
+    "title_pattern": "relay 取件值班-<短标识>（每15分钟）",
     "intervalUnit": "minute",
-    "interval": 5,
+    "interval": 15,
     "recurring": true,
-    "note": "标题必须带本会话短标识；SHUTDOWN 时按前缀『relay 取件值班-』匹配自己的那一条"
+    "note": "标题必须带本会话短标识；SHUTDOWN 时按前缀『relay 取件值班-』匹配自己的那一条；更快周期须用户明示批准（R5）。"
   },
   "idle_shutdown_threshold": 12,
   "standby_schedule": "hourly",
-  "note": "终局治理：领导值班连续 N 轮完全空闲 -> 自动 SHUTDOWN 各员工 + 领导自降频为每小时值守（不自我删除）。恢复=对领导会话说一句话。"
+  "cost_safety": {
+    "idle_downgrade_threshold": 2,
+    "downgrade_schedule": "hourly",
+    "idle_selfdelete_threshold": 4,
+    "overnight_default_off": true,
+    "min_interval_min": 15,
+    "rules": "R1 连续空转2轮降频为每小时、4轮自删全部定时器（自删前先实测本会话CronDelete可用）；R3 安全机制依赖的工具先实际调用验证；R4 连续2轮纯空转必须向用户报警并给停止选项，禁止静默循环；R5 过夜值守须用户明示批准。依据 postmortem-duty-loop-cost.md（2026-09-19 空转烧token事故）。"
+  },
+  "note": "终局治理（2026-09-19 成本安全修订）：cost_safety 优先——连续空转2轮降频为每小时、4轮自删全部定时器（自删前实测 CronDelete 可用）；过夜值守默认关。恢复=对领导会话说一句话。"
 }

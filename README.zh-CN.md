@@ -93,3 +93,7 @@ Stop hook 续接注入（`{"decision":"block"}` 平台接受）、UserPromptSubm
 ## 许可证
 
 MIT
+
+## 成本安全（v2 起）
+
+值班循环内置防浪费治理：连续空转 2 轮自动降频为每小时、4 轮自动删除全部定时器；空闲检查优先脚本化；夜间值守默认关闭（须显式开启）；任何会话在执行"自动删除"前必须先实测本会话具备该工具，否则立即升级用户而非静默空转。详见 relay 模板 runtime/loop-config.json 的 cost_safety 块。
