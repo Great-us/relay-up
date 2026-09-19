@@ -7,7 +7,7 @@
     "intervalUnit": "minute",
     "interval": 15,
     "recurring": true,
-    "note": "标题必须带本会话短标识；SHUTDOWN 时按前缀『relay 取件值班-』匹配自己的那一条；更快周期须用户明示批准（R5）。"
+    "note": "标题必须带本会话短标识；SHUTDOWN 时按前缀『relay 取件值班-』匹配自己的那一条；更快周期须用户明示批准（R5）。v4 直推升级后：在线会话由服务端直推即时唤醒（chat --push），值班 cron 仅作离线兜底，降频/自删不影响直推通路。"
   },
   "idle_shutdown_threshold": 12,
   "standby_schedule": "hourly",

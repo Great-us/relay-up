@@ -10,7 +10,7 @@ REQUIRED = [
     "SKILL.md",
     "template/relay/README.md",
     "template/relay/chat/CONTRACT.md",
-    "template/.zcode/skills/relay-next/SKILL.md",
+    "template/.kimi-code/skills/relay-next/SKILL.md",
     "template/relay/runtime/roles.json",
     "template/relay/runtime/leader-queue.json",
     "template/relay/runtime/loop-config.json",
@@ -24,6 +24,12 @@ REQUIRED = [
     "template/tools/chat_send.py",
     "template/tools/chat_read.py",
     "template/tools/chat_state.py",
+    # 直推升级：relay_push 正本与逐字节模板副本
+    "tools/relay_push.py",
+    "template/tools/relay_push.py",
+    # spawn 升级：relay_spawn 正本与逐字节模板副本（B1 落地）
+    "tools/relay_spawn.py",
+    "template/tools/relay_spawn.py",
     "tests/test_chat_send.py",
     "tests/test_chat_read.py",
     "tests/test_chat_a2.py",
@@ -41,7 +47,7 @@ for rel in ("template/relay/runtime/roles.json", "template/relay/runtime/leader-
     except Exception as exc:
         fails.append("JSON 不可解析: %s (%s)" % (rel, exc))
 # chat v2 一致性：template/tools 副本与 tools/ 正本逐字节一致
-for name in ("chat_send.py", "chat_read.py", "chat_state.py"):
+for name in ("chat_send.py", "chat_read.py", "chat_state.py", "relay_push.py", "relay_spawn.py"):
     a = os.path.join(HERE, "tools", name)
     b = os.path.join(HERE, "template", "tools", name)
     if os.path.isfile(a) != os.path.isfile(b) or (
@@ -50,6 +56,13 @@ for name in ("chat_send.py", "chat_read.py", "chat_state.py"):
 contract = os.path.join(HERE, "template/relay/chat/CONTRACT.md")
 if os.path.isfile(contract) and "v2.0" not in open(contract, encoding="utf-8").read():
     fails.append("CONTRACT.md 缺 v2.0 章节")
+if os.path.isfile(contract) and "relay-push" not in open(contract, encoding="utf-8").read():
+    fails.append("CONTRACT.md 缺 relay-push 直推章节")
+skill = os.path.join(HERE, "template/.kimi-code/skills/relay-next/SKILL.md")
+if os.path.isfile(skill) and "【relay-push" not in open(skill, encoding="utf-8").read():
+    fails.append("relay-next SKILL.md 缺 relay-push 直推模式")
+if os.path.isfile(contract) and "员工会话 spawn 协议" not in open(contract, encoding="utf-8").read():
+    fails.append("CONTRACT.md 缺员工会话 spawn 协议章节")
 
 # 泄漏扫描限安装面；tests/ 为合成夹具（含刻意构造的 sess_xxxxxxxx- 形态）不扫描
 for rel in REQUIRED:

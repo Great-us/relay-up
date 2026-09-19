@@ -1,6 +1,6 @@
 # relay/ — 会话中继信箱（Session Relay）
 
-中转规则：全部搬运由普通文件读写完成，转运与等待不调用 AI；员工取件由 `/relay-next`（手动）或值班 cron（自动自查）触发；chat 双向见 `relay/chat/CONTRACT.md`。
+中转规则：全部搬运由普通文件读写完成，转运与等待不调用 AI；员工取件由 `/relay-next`（手动）或值班 cron（自动自查）触发，在线会话另由 Kimi Code 本机服务器**直推**即时唤醒（chat_send `--push` 默认开，详见 chat/CONTRACT.md §relay-push，接收端处理见 `.kimi-code/skills/relay-next/SKILL.md`【relay-push 直推模式】）；chat 双向见 `relay/chat/CONTRACT.md`。
 
 ## 目录
 
@@ -39,3 +39,7 @@
 ## 领导验收
 
 用 verify_report.py 同款七项核验（四卡字段、九回报字段、两段哈希、task_id 一致、status 枚举、artifacts 存在），PASS+DONE 归档 pending-review 并记 ACCEPT-LOG；QUESTION/BLOCKED 由领导裁定。值班 cron 与终局治理参数见 `runtime/loop-config.json`。
+
+## 员工 spawn（server 托管会话，relay_spawn）
+
+领导可不开原生窗口，直接现场 spawn server 托管员工：`python tools/relay_spawn.py --root <根> --role employee-2 [--model 别名] [--permission auto]`——建会话（**勿带 agent_config，实测创建时被忽略**）→ profile 补模型 → profile 补权限（实测分两次更稳妥）→ 读回校验 → settle（实测 15 秒）→ roles.json 回填，此后按角色名 chat_send `--push` / relay_push 直推派工（协议逐条实测见 `chat/CONTRACT.md` §员工会话 spawn 协议）。关停：push SHUTDOWN → 员工写终局回报 → `relay_spawn --delete` 归档并清 roles.json 绑定。manual 会话审批兜底：`python tools/relay_spawn.py approve --root <根> --role employee-2 [--once]`（权限已是 auto/yolo 时通常空转）。

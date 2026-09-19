@@ -2,6 +2,9 @@ import sys, json, os, hashlib
 from datetime import datetime, timezone
 
 # relay_hook v4 —— TASK-016B：游标式未读注入 + presence 心跳（安全边界与 v3 完全一致）
+# v4.1 文案（直推升级）：注入指引改指 .kimi-code/skills/relay-next/SKILL.md（技能新址），
+#   并提示【relay-push】直推载荷的接收处理。relay-push 服务端直推与 hook 注入并存：
+#   对端在线时直推先达，hook/cron 文件层路径照旧兜底，行为不变。
 # v4 变更（其余同 v3）：
 #   presence 心跳：ROOT 解析与会话身份（sid）确认后、任何提前退出（UPS 门控关闭 / Stop
 #     链长上限 / leader 排除 / 无内容静默）之前，刷新 relay/runtime/presence.json
@@ -253,7 +256,8 @@ def build_unread_summary(tentries, msgs, all_thread_ids):
     if total == 0:
         return "", [], 0
     head = "【relay 消息】本会话有 %d 条未读（线程日志与 v1 邮箱已按 msg_id 去重，邮箱文件已移入 read/）：" % total
-    tail = "请按 .zcode/skills/relay-next/SKILL.md 的【消息模式】处理（若同时收到任务卡，先做卡再处理消息）。"
+    tail = ("请按 .kimi-code/skills/relay-next/SKILL.md 的【消息模式】处理（直推到达的消息为【relay-push】"
+            "载荷时先按【relay-push 直推模式】解析校验；若同时收到任务卡，先做卡再处理消息）。")
     guide = "用 chat_read --thread <thread_id> 可读全文。"
     items = [("t", e) for e in tentries] + [("m", m) for m in
                                             sorted(v1only, key=lambda m: (str(m.get("from", "")), str(m.get("msg_id", ""))))]
@@ -301,6 +305,7 @@ def advance_shown_prefix(root, sid, shown_entries):
 def main():
     global RELAY, RUNTIME, REGISTRY, CHAIN_LOG, LEADER_DENY, ROLES, UPS_FLAG, CHAT
 
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # 与 tools/ 家族一致：注入 JSON 恒为 UTF-8
     event = sys.argv[1] if len(sys.argv) > 1 else ""
     raw = sys.stdin.buffer.read()
     try:
@@ -453,8 +458,9 @@ def main():
                                  "action": "claim+continue", "task_id": card[1]["task_id"],
                                  "chain_count": st["count"], "card": dest_name})
         parts.append("【relay 自动续接】本会话已自动领取下一张任务卡 %s（relay/claimed/%s）。"
-                     "请立即按 .zcode/skills/relay-next/SKILL.md 的【续接模式】执行该卡：校验哈希 → "
+                     "请立即按 .kimi-code/skills/relay-next/SKILL.md 的【续接模式】执行该卡：校验哈希 → "
                      "排空式执行（连同下方消息一并处理）→ 写回报 → 队列空后停止。不要自己去 inbox 抢卡。"
+                     "回报后的 NOTICE 会经服务端直推领导（push=failed 时文件层已落盘，不影响）。"
                      % (card[1]["task_id"], dest_name))
     if text:
         if msgs:

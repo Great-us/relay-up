@@ -5,20 +5,34 @@
     python tests/task-010/test_chat_send.py
 覆盖 TASK-011-Q01 卡要求：seq 递增（同收件人连发两条 seq=1,2）、非法 kind exit 2、
 body 超 4000 字 exit 2、--to sess:xxxx 目录规范化为 to-sess-xxxx、UTF-8 中文正文写读一致。
+TASK-016A v2.0 线程层与 TASK-016A2 崩溃恢复/并发追加见下方各类。
+server 直推（relay-push）：--no-push 行尾无 push 后缀；无 server/无模块时
+push=failed 后缀但退出码与双写不变；relay_push.py 就绪时另跑假 server 验证 push=ok
+与 HTTP 错误降级（@skipIf 守卫，A1 并行开发期间自动跳过）。
 """
 
 import hashlib
+import http.server
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+from datetime import datetime, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT_REPO = os.path.normpath(os.path.join(HERE, ".."))
 CHAT_SEND = os.path.join(ROOT_REPO, "tools", "chat_send.py")
 PY = sys.executable
+
+sys.path.insert(0, os.path.join(ROOT_REPO, "tools"))
+try:
+    import relay_push  # noqa: E402,F401
+    HAS_RELAY_PUSH = True
+except ImportError:
+    HAS_RELAY_PUSH = False
 
 
 def sha256(text):
@@ -29,10 +43,10 @@ class Base(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp(prefix="relay-chatsend-test-")
 
-    def run_send(self, *extra):
+    def run_send(self, *extra, env=None):
         proc = subprocess.run(
             [PY, CHAT_SEND, "--root", self.root] + list(extra),
-            capture_output=True, timeout=30)
+            capture_output=True, timeout=30, env=env)
         return (proc.returncode,
                 proc.stdout.decode("utf-8", "replace"),
                 proc.stderr.decode("utf-8", "replace"))
@@ -214,6 +228,186 @@ class ConcurrentAppend(Base):
         self.assertEqual(len(msgs), 10)
         seqs = sorted(m["thread_seq"] for m in msgs)
         self.assertEqual(seqs, list(range(1, 11)))         # 无重复
+
+
+# ---- server 直推（relay-push）----
+
+class FakePushServer:
+    """宽容的假 Kimi Code server：/healthz 返 200；API 一律 {code:0} 信封并按路径填 data。
+
+    不假设 relay_push 的具体调用序列（A1 实现），任何 GET/POST 都成功并记录请求。
+    """
+
+    def __init__(self):
+        self.requests = []                       # [(method, path, body_bytes)]
+        self._stopped = False
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
+        self.port = self.server.server_address[1]
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+
+    def _handler(self):
+        recorded = self.requests
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args):        # 静音，不污染测试输出
+                pass
+
+            def _reply(self, method):
+                n = int(self.headers.get("Content-Length") or 0)
+                body = self.rfile.read(n) if n else b""
+                recorded.append((method, self.path, body))
+                path = self.path.rstrip("/")
+                if path.endswith("healthz"):
+                    payload, ctype = b"ok", "text/plain"
+                else:
+                    data = {}
+                    if method == "POST" and path.endswith("/sessions"):
+                        data = {"id": "sess_newpush01", "state": "idle"}
+                    elif path.endswith("/prompts"):
+                        data = {"id": "prompt-1"}
+                    elif "/sessions/" in path:
+                        sid = path.split("/sessions/", 1)[1]
+                        data = {"id": sid, "state": "idle"}
+                    payload = json.dumps({"code": 0, "msg": "ok", "data": data}).encode("utf-8")
+                    ctype = "application/json"
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def do_GET(self):
+                self._reply("GET")
+
+            def do_POST(self):
+                self._reply("POST")
+
+        return H
+
+    def start(self):
+        self.thread.start()
+        return self
+
+    def stop(self):
+        if self._stopped:
+            return
+        self._stopped = True
+        self.server.shutdown()
+        self.server.server_close()
+
+    @property
+    def base(self):
+        return "http://127.0.0.1:%d" % self.port
+
+
+def write_presence_route(root, full_sid="sess_aaaa1111bbbb2222", short="aaaa1111"):
+    """按合同写 presence.json + session-registry.jsonl，给 --to sess:<短8> 一条活路由。
+
+    不写 roles.json（其 schema 不在本任务范围），解析顺位自然落到 presence；
+    last_seen 取当前时间，避免"对端不在线"降级。
+    """
+    runtime = os.path.join(root, "relay", "runtime")
+    os.makedirs(runtime, exist_ok=True)
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    presence = {"sessions": {full_sid: {"short": short, "model": "k2",
+                                        "last_seen": now, "cwd": root}},
+                "updated_at": now}
+    with open(os.path.join(runtime, "presence.json"), "w",
+              encoding="utf-8", newline="\n") as f:
+        json.dump(presence, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    with open(os.path.join(runtime, "session-registry.jsonl"), "w",
+              encoding="utf-8", newline="\n") as f:
+        f.write(json.dumps({"ts": now, "session_id": full_sid, "cwd": root, "model": "k2"},
+                           ensure_ascii=False) + "\n")
+
+
+def push_env(base, token="test-token"):
+    env = dict(os.environ)
+    env["RELAY_PUSH_BASE"] = base               # 设置即跳过 instances 发现
+    env["RELAY_PUSH_TOKEN"] = token
+    return env
+
+
+class PushDisabled(Base):
+    def test_no_push_flag_no_suffix(self):
+        rc, out, err = self.run_send("--from", "leader", "--to", "employee-4",
+                                     "--kind", "NOTICE", "--body", "不推送",
+                                     "--no-push")
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(out.startswith("OK "))
+        self.assertNotIn("push=", out)              # 显式关闭：行尾无 push 后缀
+        _, _, msg = self.read_msg("to-employee-4")
+        self.assertEqual(msg["body"], "不推送")      # 文件层照常双写
+
+
+class PushDegraded(Base):
+    """无 relay_push 模块/无 server/无路由时：push 降级为 failed 后缀，退出码与双写不变。"""
+
+    def test_default_push_failed_suffix_exit0_files_intact(self):
+        rc, out, err = self.run_send("--from", "leader", "--to", "employee-4",
+                                     "--kind", "NOTICE", "--body", "降级仍投递")
+        self.assertEqual(rc, 0, err)
+        self.assertIn(" push=failed:", out)          # 默认开，无 server → 失败后缀
+        self.assertIn(" t-employee-4-leader#1 ", out)  # OK 行主体格式不变
+        _, _, msg = self.read_msg("to-employee-4")
+        self.assertEqual(msg["body"], "降级仍投递")
+        msgs = read_thread(self.root, "t-employee-4-leader")
+        self.assertEqual(len(msgs), 1)               # 线程日志照常
+
+    def test_retry_of_rebuild_does_not_push(self):
+        rc, out, _ = self.run_send("--from", "leader", "--to", "employee-4",
+                                   "--kind", "CHAT", "--body", "首发", "--no-push")
+        self.assertEqual(rc, 0)
+        msg_id = out.split()[1]
+        pend = self.pend_dir("to-employee-4")
+        os.remove(os.path.join(pend, os.listdir(pend)[0]))   # 模拟邮箱文件丢失
+        rc, out, err = self.run_send("--from", "leader", "--to", "employee-4",
+                                     "--kind", "CHAT", "--body", "whatever",
+                                     "--retry-of", msg_id)   # 默认 push 开
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("push=", out)               # 重建不推送，避免接收端重复投递
+        self.assertTrue(os.listdir(pend))            # 邮箱已重建
+
+
+@unittest.skipIf(not HAS_RELAY_PUSH, "relay_push.py 未就绪（A1 并行开发中）")
+class PushOnline(Base):
+    """relay_push 就绪后：假 server 验证 push=ok 与 HTTP 错误降级（不改退出码）。"""
+
+    def setUp(self):
+        super().setUp()
+        self.server = FakePushServer().start()
+        write_presence_route(self.root)
+        self.env = push_env(self.server.base)
+
+    def tearDown(self):
+        self.server.stop()
+
+    def test_push_ok_suffix_and_payload_delivered(self):
+        body = "server-push PONG-OK 正文：直推联通。"
+        rc, out, err = self.run_send("--from", "leader", "--to", "sess:aaaa1111",
+                                     "--kind", "NOTICE", "--body", body,
+                                     "--ref", "TASK-PUSH", env=self.env)
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(out.rstrip().endswith(" push=ok"), out)
+        prompts = [r for r in self.server.requests
+                   if r[0] == "POST" and r[1].rstrip("/").endswith("/prompts")]
+        self.assertEqual(len(prompts), 1, self.server.requests)
+        payload = prompts[0][2].decode("utf-8", "replace")
+        self.assertIn("PONG-OK", payload)            # 载荷含正文（ASCII 段，编码无关）
+        self.assertIn(sha256(body), payload)         # 载荷含 body-sha256（合同字段值）
+        _, _, msg = self.read_msg("to-sess-aaaa1111")
+        self.assertEqual(msg["body"], body)          # 文件层不受影响
+
+    def test_push_http_error_failed_suffix_exit0(self):
+        self.server.stop()                           # 关 server → 连接拒绝
+        rc, out, err = self.run_send("--from", "leader", "--to", "sess:aaaa1111",
+                                     "--kind", "NOTICE", "--body", "server 挂了",
+                                     env=self.env)
+        self.assertEqual(rc, 0, err)                 # HTTP 错误不改退出码
+        self.assertIn(" push=failed:", out)
+        _, _, msg = self.read_msg("to-sess-aaaa1111")
+        self.assertEqual(msg["body"], "server 挂了")
 
 
 if __name__ == "__main__":

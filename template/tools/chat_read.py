@@ -139,8 +139,9 @@ def list_threads(root):
 
 def main():
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser()
-    ap.add_argument("--root", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+    ap.add_argument("--root", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
     ap.add_argument("--thread", default="")
     ap.add_argument("--threads", action="store_true")
     ap.add_argument("--unread", default="", metavar="会话")

@@ -16,5 +16,6 @@
       "note": "员工窗口开启并首次领取后，从 claimed 文件名 .by-sess-<id8> 回填短标识"
     }
   },
-  "chat_address_rules": ["角色名（leader / employee-N）", "sess:<完整session_id>", "sess:<8位短标识>"]
+  "chat_address_rules": ["角色名（leader / employee-N）", "sess:<完整session_id>", "sess:<8位短标识>"],
+  "relay_push": "服务端直推（tools/relay_push.py / chat_send --push）按上述地址写法解析：roles.json → presence.json → session-registry.jsonl；解析不出报 no-route。roles.json 有登记即直推，未登记回落 presence/registry 动态寻址。"
 }

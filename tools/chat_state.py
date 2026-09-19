@@ -270,7 +270,7 @@ def budget_check_and_count(root, thread, session, inbound_msg_id, limit=BUDGET_L
 def main():
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser()
-    ap.add_argument("--root", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+    ap.add_argument("--root", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
     ap.add_argument("--cursor-get", default="", metavar="短8")
     ap.add_argument("--cursor-advance", default="", metavar="短8")
     ap.add_argument("--thread", default="")

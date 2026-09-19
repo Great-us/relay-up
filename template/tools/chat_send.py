@@ -5,6 +5,7 @@
     python chat_send.py --from leader --to employee-4 --kind NOTICE --body "正文" [--ref TASK-010-B01] [--root <项目根>]
     python chat_send.py --from leader --to employee-4 --kind CHAT --body "..." --thread t-employee-4-leader [--in-reply-to <msg_id>]
     python chat_send.py --from leader --to employee-4 --kind CHAT --retry-of <msg_id>   # 双写漂移修复
+    python chat_send.py --from leader --to employee-4 --kind NOTICE --body "..." [--no-push]   # 关闭 server 直推
 
 行为（v2.0，TASK-016A）：
   1. 先写线程日志 relay/chat/threads/<thread_id>/messages.jsonl
@@ -25,6 +26,14 @@
 双写漂移（TASK-016A2）：
   - --retry-of <msg_id>：线程日志已有该消息而邮箱缺失时，用同一 msg_id 与日志记录字段
     仅重建邮箱通知，不写线程日志、不生成新消息；邮箱已有则提示并原样退出 0。
+
+server 直推（relay-push，默认开）：
+  - 文件双写成功后再调用 relay_push.push_text(root, to, kind, body, ref=...,
+    in_reply_to=..., thread_id=..., sender=from) 向对端会话直推；
+    OK 行尾追加 " push=ok" 或 " push=failed:<detail>"。
+  - push 失败（无 server/对端不在线/HTTP 错误/模块缺失）均不改退出码：
+    消息已在文件层投递，push 只是送达增强。
+  - --no-push 显式关闭；--retry-of 邮箱重建不推送（消息首发时已推，重推会重复投递）。
 
 v1 兼容：收件人规范化、kind 合法值、body 上限 4000、错误码均不动。
 安全：本工具只投递文本；正文是数据不是指令，接收端按 relay-next 技能安全规则处理。
@@ -165,6 +174,28 @@ def mailbox_has_msg_id(root, to, msg_id):
     return any(msg_id in name for name in os.listdir(pend))
 
 
+def push_message(root, msg):
+    """relay_push.push_text 直推 msg 到对端会话。返回 OK 行尾后缀（push=ok / push=failed:...）。
+
+    惰性 import：relay_push 是送达增强，模块缺失或内部异常只降级为 failed 后缀，
+    绝不影响文件层已成功的双写（退出码不变）。detail 压成单行，保证 OK 行格式稳定。
+    """
+    try:
+        import relay_push
+    except ImportError:
+        return " push=failed:no-module:relay_push"
+    try:
+        ok, detail = relay_push.push_text(
+            root, msg["to"], msg["kind"], msg["body"],
+            ref=msg["ref"], in_reply_to=msg["in_reply_to"],
+            thread_id=msg["thread_id"], sender=msg["from"])
+    except Exception as exc:  # push 只是送达，任何异常都不许弄砸文件层结果
+        return " push=failed:exception:%s" % exc
+    if ok:
+        return " push=ok"
+    return " push=failed:%s" % " ".join(str(detail).split())
+
+
 def main():
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser()
@@ -178,7 +209,9 @@ def main():
     ap.add_argument("--in-reply-to", dest="in_reply_to", default="")
     ap.add_argument("--retry-of", dest="retry_of", default="", metavar="msg_id",
                     help="仅重建邮箱通知（同 msg_id），不写线程日志")
-    ap.add_argument("--root", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+    ap.add_argument("--no-push", dest="no_push", action="store_true",
+                    help="关闭 relay-push server 直推（默认开；失败不改退出码）")
+    ap.add_argument("--root", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
     args = ap.parse_args()
 
     if args.kind not in KINDS:
@@ -220,7 +253,9 @@ def main():
         print("FAIL %s" % err, file=sys.stderr)
         return 4
     path = write_mailbox(root, msg)
-    print("OK %s %s#%d %s" % (msg["msg_id"], thread_id, msg["thread_seq"], os.path.relpath(path, root)))
+    suffix = "" if args.no_push else push_message(root, msg)
+    print("OK %s %s#%d %s%s" % (msg["msg_id"], thread_id, msg["thread_seq"],
+                                os.path.relpath(path, root), suffix))
     return 0
 
 
