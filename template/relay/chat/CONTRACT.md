@@ -39,9 +39,49 @@ relay/chat/
 
 ## 投递机制（两层）
 
-1. **hook 快路径**（`tools/task-010/relay_hook.py` v2）：会话 Stop 时检测本会话 pending 消息（含卡片场景合并注入）；UserPromptSubmit 检测由 `relay/runtime/ups-context-enabled` 标志文件门控（输出合同实测通过前默认关闭）。
+1. **hook 快路径**（`hooks/relay_hook.py` v2）：会话 Stop 时检测本会话 pending 消息（含卡片场景合并注入）；UserPromptSubmit 检测由 `relay/runtime/ups-context-enabled` 标志文件门控（输出合同实测通过前默认关闭）。
 2. **技能/值班 cron 路径**：员工值班 cron 唤醒或用户任意消息时，会话按技能自查 pending 并领取——不依赖 hook，等价可达。
 
 ## 发送工具
 
 `python tools/chat_send.py --from <角色> --to <角色|sess:id> --kind KIND --body "..." [--ref TASK-X]`
+
+## v2.0 线程层（TASK-016A 起）
+
+邮箱投递行为不变（每条消息仍写 `to-<收件人>/pending/`，v1 接收端零改动可用）；v2 在其上增加线程日志为事实源。
+
+### 线程日志
+
+- 路径：`relay/chat/threads/<thread_id>/messages.jsonl`，一行一条消息（JSON、UTF-8、行尾 `\n`）。
+- `thread_id = t-<A>-<B>`：A、B 为两个参与者地址（角色名 `leader`/`employee-N` 或会话短8），**按字典序排序**后以 `-` 连接。
+- 单条消息 = v1.0 全部十字段原样 + 三个新字段：
+  - `thread_id`：所属线程；
+  - `in_reply_to`：引用的 msg_id，缺省 `""`；
+  - `thread_seq`：线程内从 1 起单调递增。
+- v1.0 的 `seq` 字段保留原义（邮箱文件名序号），不复用为线程序号；线程日志与邮箱双写的同一消息十+三字段取值一致。
+
+### thread_seq 分配
+
+- 发送时读该线程日志尾行（最后一条完整行）的 `thread_seq` +1；日志不存在则从 1 起。
+- **单机单写者假设**：所有写入都经由 `chat_send.py`（单进程 CLI 串行调用）；追加使用 O_APPEND 单次 write 整行。跨机/多进程并发不承诺。
+
+### 游标
+
+- 路径：`relay/runtime/cursors/<会话短8>.json`，schema：`{"threads": {"<thread_id>": <已读到的thread_seq>}, "updated_at": "<ISO UTC>"}`。
+- 由 `chat_read.py --mark` 手动推进；hook 自动推进属 16-B。
+
+### presence（仅 schema，暂不实现写入）
+
+`relay/runtime/presence.json`：`{"sessions": {"<完整session_id>": {"short": "", "model": "", "last_seen": "", "cwd": ""}}, "updated_at": ""}`。
+
+### 静默开关（仅 schema）
+
+`relay/runtime/chat-mute.json`：`{"threads": [], "sessions": [], "updated_at": ""}`。
+
+### 坏行处理
+
+读取方（`chat_read.py`）遇到 JSON 解析失败或 `body_sha256` 不符的行：跳过、计数并在 stderr 列出，不中断其余行；不做修复写回。
+
+### 查看工具
+
+`python tools/chat_read.py --root <根> [--thread <id>] [--threads] [--unread <短8>] [--presence] [--mark]`——详见工具文档字符串。

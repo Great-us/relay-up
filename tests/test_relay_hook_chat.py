@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""TASK-011 relay_hook v2 单元测试（仅标准库；合成 stdin + 临时 RELAY_HOOK_ROOT，不触生产 runtime）。
+"""relay_hook 单元测试（v2/v3 回归 + TASK-016B v4 游标注入/presence；仅标准库；合成 stdin + 临时 RELAY_HOOK_ROOT，不触生产 runtime）。
 
 运行：
-    python tests/task-010/test_relay_hook_chat.py
+    python tests/test_relay_hook_chat.py          （暂存包：hooks/relay_hook.py + tools/chat_send.py）
+    python tests/task-010/test_relay_hook_chat.py （本体：tools/task-010/ 内同套文件，路径自动探测）
 stdin 合同依据 reports/task-010-zcode-relay/EVENT-CHAIN.md（VERIFIED_LOCAL）：
 公共字段双命名（snake_case 与 camelCase 同值），hook 以 snake_case 为规范、camelCase 兜底。
 """
@@ -13,15 +14,43 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT_REPO = os.path.normpath(os.path.join(HERE, ".."))
-HOOK = os.path.join(ROOT_REPO, "hooks", "relay_hook.py")
-CHAT_SEND = os.path.join(ROOT_REPO, "tools", "chat_send.py")
+
+
+def _repo_root():
+    """向上探测仓库根（暂存包 tests/ 一层深；本体 tests/task-010/ 两层深）。"""
+    d = HERE
+    for _ in range(4):
+        for rel in ("hooks", os.path.join("tools", "task-010")):
+            if os.path.isfile(os.path.join(d, rel, "relay_hook.py")):
+                return d
+        nd = os.path.dirname(d)
+        if nd == d:
+            break
+        d = nd
+    return os.path.normpath(os.path.join(HERE, ".."))
+
+
+def _tool(name, rels=(os.path.join("tools", "task-010"), "tools")):
+    d = _repo_root()
+    for rel in rels:
+        cand = os.path.join(d, rel, name)
+        if os.path.isfile(cand):
+            return cand
+    return os.path.join(d, rels[-1], name)
+
+
+ROOT_REPO = _repo_root()
+HOOK = _tool("relay_hook.py", ("hooks", os.path.join("tools", "task-010")))
+CHAT_SEND = _tool("chat_send.py")
 PY = sys.executable
 
 EMP = "sess_1111aaaa-0000-0000-0000-000000000000"   # 短标识 1111aaaa
+EMP2 = "sess_2222bbbb-0000-0000-0000-000000000000"  # 短标识 2222bbbb
+NEWB = "sess_9999ffff-0000-0000-0000-000000000000"  # 短标识 9999ffff（重绑测试的新窗口）
 LEADER = "sess_9999bbbb-0000-0000-0000-000000000000"
 
 
@@ -35,7 +64,7 @@ class Base(unittest.TestCase):
         for sub in ("inbox", "claimed", "outbox", "runtime", "chat"):
             os.makedirs(os.path.join(self.root, "relay", sub), exist_ok=True)
 
-    def run_hook(self, event, sid=EMP, turn="t1", extra=None, cwd=None, raw=None, use_env_root=True):
+    def run_hook(self, event, sid=EMP, turn="t1", extra=None, cwd=None, raw=None, use_env_root=True, hook_env=None):
         payload = {
             "session_id": sid, "sessionId": sid,
             "turn_id": turn, "turnId": turn,
@@ -47,6 +76,8 @@ class Base(unittest.TestCase):
             env["RELAY_HOOK_ROOT"] = self.root
         else:
             env.pop("RELAY_HOOK_ROOT", None)
+        if hook_env:
+            env.update(hook_env)
         proc = subprocess.run(
             [PY, HOOK, event],
             input=raw if raw is not None else json.dumps(payload).encode("utf-8"),
@@ -274,6 +305,163 @@ class ChatSendRoundtrip(Base):
              "--kind", "SHOUT", "--body", "x", "--root", self.root],
             capture_output=True, timeout=30)
         self.assertEqual(proc.returncode, 2)
+
+
+class V4UnreadInjection(Base):
+    """TASK-016B relay_hook v4：游标式未读注入 + presence 心跳。"""
+
+    def register(self, sid, model="GLM-5.3-test"):
+        rc, out = self.run_hook("SessionStart", sid=sid, extra={"model": model})
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.strip(), "")
+
+    def send(self, frm, to, body, kind="NOTICE"):
+        proc = subprocess.run(
+            [PY, CHAT_SEND, "--from", frm, "--to", to, "--kind", kind,
+             "--body", body, "--root", self.root],
+            capture_output=True, timeout=30)
+        self.assertEqual(proc.returncode, 0, proc.stderr.decode("utf-8", "replace"))
+        return proc.stdout.decode("utf-8", "replace").split()[1]   # OK <msg_id> ...
+
+    def cursor(self, short):
+        path = os.path.join(self.root, "relay", "runtime", "cursors", short + ".json")
+        try:
+            with open(path, encoding="utf-8") as f:
+                return json.load(f).get("threads", {})
+        except (OSError, ValueError):
+            return {}
+
+    def presence(self):
+        with open(os.path.join(self.root, "relay", "runtime", "presence.json"), encoding="utf-8") as f:
+            return json.load(f).get("sessions", {})
+
+    def test_thread_unread_injected_and_cursor_advanced(self):
+        self.register(EMP)
+        msg_id = self.send("leader", "sess:1111aaaa", "v2 即达消息")
+        rc, out = self.run_hook("Stop")
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["decision"], "block")
+        self.assertIn("【relay 消息】", out)
+        self.assertIn("v2 即达消息", out)
+        self.assertIn("t-1111aaaa-leader", out)
+        self.assertIn("seq=1", out)
+        self.assertIn("kind=NOTICE", out)
+        self.assertEqual(out.count(msg_id), 1)                     # v1/v2 双现合并为一条
+        self.assertEqual(self.cursor("1111aaaa").get("t-1111aaaa-leader"), 1)
+        self.assertEqual(len(self.chat_read("to-sess-1111aaaa")), 1)
+
+    def test_three_session_isolation(self):
+        self.register(EMP)
+        self.register(EMP2)
+        self.register(LEADER)
+        time.sleep(1.3)   # 消息时间戳为秒级截断：保证发送秒 ≥ 注册秒
+        with open(os.path.join(self.root, "relay", "runtime", "roles.json"), "w", encoding="utf-8") as f:
+            json.dump({"leader": {"session_id": LEADER, "short": "9999bbbb"},
+                       "employees": {"employee-8": {"session_id": EMP, "short": "1111aaaa"}}}, f)
+        self.send("leader", "sess:1111aaaa", "给一号窗")
+        self.send("leader", "sess:2222bbbb", "给二号窗")
+        self.send("1111aaaa", "leader", "呈报领导")
+        rc, o1 = self.run_hook("Stop", sid=EMP)
+        self.assertIn("给一号窗", o1)
+        self.assertNotIn("给二号窗", o1)
+        self.assertNotIn("呈报领导", o1)
+        rc, o2 = self.run_hook("Stop", sid=EMP2)
+        self.assertIn("给二号窗", o2)
+        self.assertNotIn("给一号窗", o2)
+        rc, o3 = self.run_hook("Stop", sid=LEADER)
+        self.assertIn("呈报领导", o3)
+        self.assertNotIn("给一号窗", o3)
+        self.assertNotIn("给二号窗", o3)
+
+    def test_own_sent_not_inbound(self):
+        self.register(EMP)
+        self.send("1111aaaa", "leader", "自发不算未读")
+        rc, out = self.run_hook("Stop")
+        self.assertEqual(out.strip(), "")                          # 自发消息不算入站
+        pend = os.path.join(self.root, "relay", "chat", "to-leader", "pending")
+        self.assertEqual(len(os.listdir(pend)), 1)                 # 他人邮箱原地不动
+
+    def test_role_rebind_old_private_not_transferred(self):
+        roles = os.path.join(self.root, "relay", "runtime", "roles.json")
+        with open(roles, "w", encoding="utf-8") as f:
+            json.dump({"leader": {}, "employees": {"employee-4": {"session_id": EMP, "short": "1111aaaa"}}}, f)
+        self.register(EMP)
+        self.send("leader", "employee-4", "旧私聊不移交")
+        time.sleep(1.3)   # 消息时间戳为秒级截断：保证旧消息秒 < 新窗注册秒
+        # 重绑：新窗口在消息之后注册（现实顺序=换窗→回填 roles）
+        with open(roles, "w", encoding="utf-8") as f:
+            json.dump({"leader": {}, "employees": {"employee-4": {"session_id": NEWB, "short": "9999ffff"}}}, f)
+        self.register(NEWB)
+        rc, out_new = self.run_hook("Stop", sid=NEWB)
+        self.assertEqual(out_new.strip(), "")                      # 旧私聊未自动移交
+        rc, out_old = self.run_hook("Stop", sid=EMP)
+        self.assertEqual(out_old.strip(), "")                      # 旧窗口已不持有角色
+        # 新窗口的直接寻址不受重绑影响
+        self.send("leader", "sess:9999ffff", "新窗直发")
+        rc, out_direct = self.run_hook("Stop", sid=NEWB)
+        self.assertIn("新窗直发", out_direct)
+
+    def test_budget_cut_leaves_tail_and_cursor_prefix(self):
+        self.register(EMP)
+        for i in range(1, 9):
+            self.send("leader", "sess:1111aaaa", "预算消息%02d" % i)
+        rc, out = self.run_hook("Stop", hook_env={"RELAY_UNREAD_MAX_MSGS": "5"})
+        for n in range(1, 6):
+            self.assertIn("(%d) thread=" % n, out)
+        self.assertNotIn("(6) thread=", out)
+        self.assertIn("另有 3 条未读未展开", out)                   # 剩余数正确
+        self.assertEqual(self.cursor("1111aaaa").get("t-1111aaaa-leader"), 5)  # 只推进已注入前缀
+        rc, out2 = self.run_hook("Stop", turn="t2")
+        self.assertIn("预算消息08", out2)
+        self.assertNotIn("另有", out2)
+        self.assertEqual(self.cursor("1111aaaa").get("t-1111aaaa-leader"), 8)
+
+    def test_crash_after_claim_before_output_redelivers(self):
+        self.register(EMP)
+        self.send("leader", "sess:1111aaaa", "崩溃重投消息")
+        # 模拟"领取后、注入输出前崩溃"：pending 已被移入 read，游标未推进
+        pend = os.path.join(self.root, "relay", "chat", "to-sess-1111aaaa", "pending")
+        read = os.path.join(self.root, "relay", "chat", "to-sess-1111aaaa", "read")
+        os.makedirs(read, exist_ok=True)
+        for name in os.listdir(pend):
+            os.rename(os.path.join(pend, name), os.path.join(read, name))
+        rc, out = self.run_hook("Stop")
+        self.assertIn("崩溃重投消息", out)                          # 从线程日志按游标重投
+        self.assertEqual(self.cursor("1111aaaa").get("t-1111aaaa-leader"), 1)
+
+    def test_v1_only_mailbox_message_still_injected(self):
+        self.write_chat("to-sess-1111aaaa", body="纯v1消息", msg_id="m-v1only")
+        rc, out = self.run_hook("Stop")
+        self.assertIn("纯v1消息", out)
+        self.assertIn("m-v1only", out)
+
+    def test_ups_flag_off_presence_still_refreshed(self):
+        self.register(EMP, model="GLM-5.3-主力")
+        rc, out = self.run_hook("UserPromptSubmit", extra={"prompt": "用户消息"})  # 无门控标志
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.strip(), "")                          # 门控关：不注入
+        ent = self.presence()[EMP]
+        self.assertEqual(ent["short"], "1111aaaa")
+        self.assertEqual(ent["model"], "GLM-5.3-主力")             # 无 model 事件不覆盖已知 model
+        self.assertTrue(ent["last_seen"])
+
+    def test_stop_ups_race_idempotent(self):
+        open(os.path.join(self.root, "relay", "runtime", "ups-context-enabled"), "w").close()
+        self.register(EMP)
+        self.send("leader", "sess:1111aaaa", "竞争幂等")
+        rc, up1 = self.run_hook("UserPromptSubmit", extra={"prompt": "x"})
+        self.assertIn("竞争幂等", up1)
+        rc, up2 = self.run_hook("UserPromptSubmit", extra={"prompt": "x"})        # 同轮再触发
+        self.assertEqual(up2.strip(), "")                          # 游标已推进 → 幂等静默
+        rc, st1 = self.run_hook("Stop")
+        self.assertEqual(st1.strip(), "")                          # Stop 无新内容
+
+    def test_unregistered_session_direct_message(self):
+        # 无 registry/roles 的临时根：直接寻址消息仍可收（v1 兼容）
+        self.send("leader", "sess:1111aaaa", "临时根直发")
+        rc, out = self.run_hook("Stop")
+        self.assertIn("临时根直发", out)
 
 
 if __name__ == "__main__":

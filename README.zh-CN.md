@@ -56,15 +56,27 @@
 - **续写链上限**：每自然轮最多 3 次连续自动唤醒（平台规则），值班 cron 每次唤醒都是新自然轮，“排空式执行”保证轮内不限量——续航与防失控兼得。
 - **终局治理**：领导可随时关停/删除/降频全部定时器；无人值守时持续空闲自动降频值守，保留一句话恢复能力。
 
+## chat 车道 v2：线程、游标、预算、静音
+
+任务卡车道之外，relay-up 还内置会话间 chat 车道（`tools/chat_send.py`、`tools/chat_read.py`、`tools/chat_state.py`，合同见 `template/relay/chat/CONTRACT.md` §v2.0）：
+
+- **双层存储**：每条消息先追加线程日志（`relay/chat/threads/<thread_id>/messages.jsonl`，事实源），再投递收件人邮箱（`to-<地址>/pending/`），v1 接收端零改动可用。
+- **游标**：`relay/runtime/cursors/<会话>.json` 按线程记录已读位置，经 `chat_read.py --mark` 手动推进（hook 自动推进属宿主项目工作）。
+- **presence / 预算 / 静音**：`presence.json`（schema）；每线程×每会话×每对话周期**自动回复上限 3 条**的持久化预算（`chat_state.py --budget-check` 执行）；`chat-mute.json` 静音开关暂停自动回复、不动历史与未读。
+- **唤醒降级（明确定义，不承诺无条件“未读即达”）**：活跃会话在下一次 hook 事件时收到消息；空闲会话依赖值班 cron 或用户触发；跨厂商接收端（Codex / Claude Code 等）走人工粘贴降级路径（摘要工具把 pending 邮箱渲染为可粘贴正文）。relay 不向任意客户端承诺推送可达。
+- 跨厂商信封桥（events.db→chat v2，仅显式 relay-chat 信封）为宿主项目自带工具，**不入模板**。
+
 ## 仓库结构
 
 ```
 SKILL.md                     # /relay-up 技能（安装器，up/down 两模式）
 hooks/relay_hook.py          # 会话 hook：SessionStart 注册 / Stop 续接注入 / UPS 上下文注入（v3 标记路由）
-tools/chat_send.py           # chat 车道发送 CLI
+tools/chat_send.py           # chat 车道发送 CLI（v2：线程日志+邮箱双写）
+tools/chat_read.py           # 线程查看：threads/转储/未读/游标/presence
+tools/chat_state.py          # 共享状态：游标/presence/静音/预算（锁内原子合并）
 tools/verify_report.py       # 领导验收七项核验
 template/                    # 铺设到目标项目的骨架（信箱合同/员工技能/自举卡示例/runtime 空壳）
-tests/                       # 标准库单测（25 项：领取/注入/合并/去重/隔离/门控/fail-open/多项目路由）
+tests/                       # 标准库单测（领取/注入/合并/去重/隔离/门控/fail-open/多项目路由 + chat v2 套件）
 check_template.py            # 模板完整性自检
 ```
 

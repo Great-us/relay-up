@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""TASK-010 领导验收核对工具（员工 TASK-010-E02 交付，仅 Python 标准库）。
+"""relay 验收核对工具（仅 Python 标准库，领导验收回报用）。
 
 用法：
     python verify_report.py <claimed卡路径> <outbox回报路径>
 
-核对 relay 信箱的一张领取卡与对应回报是否满足 TASK-010 合同：
+核对 relay 信箱的一张领取卡与对应回报是否满足九字段回报合同：
   a. 卡 JSON 可解析且含 version/task_id/prompt/prompt_sha256 四字段
   b. 回报 JSON 可解析且含九个必备字段
      （task_id/status/worker_session/actual_model/artifacts/verification/
@@ -38,8 +38,19 @@ REPORT_FIELDS = (
 )
 VALID_STATUS = ("DONE", "BLOCKED", "QUESTION")
 
-# 本脚本位于 <项目根>/tools/task-010/，项目根 = 上溯两级。
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# 兼容两种安装深度：<项目根>/tools/<子目录>/（深一层）与 <项目根>/tools/（浅一层）。
+# 按文件位置探测：parents[1]/relay 存在取 parents[1]（浅层），否则若 parents[2]/relay
+# 存在取 parents[2]（深层）；都探测不到时回退 parents[2] 保持旧行为。
+def _detect_project_root():
+    here = Path(__file__).resolve()
+    for depth in (1, 2):
+        cand = here.parents[depth]
+        if (cand / "relay").is_dir():
+            return cand
+    return here.parents[2]
+
+
+PROJECT_ROOT = _detect_project_root()
 
 
 def sha256_text(text):

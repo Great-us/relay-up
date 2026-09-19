@@ -57,18 +57,30 @@ Queue empty & everything accepted → automatic standby throttle
 - **Continuation chain cap** — at most 3 consecutive automatic wake-ups per natural turn (a platform rule); every cron tick is a fresh natural turn, and drain-mode does unlimited work *within* a turn. You get endurance and runaway protection at the same time.
 - **Lifecycle governance** — the leader can shut down / delete / throttle all crons at any time; when unattended, sustained idleness automatically stands workers down and throttles the leader to an hourly watch, revivable with a single sentence.
 
+## Chat lane v2: threads, cursors, budget, mute
+
+Beyond the task-card lane, relay-up ships a chat lane between sessions (`tools/chat_send.py`, `tools/chat_read.py`, `tools/chat_state.py`, contract in `template/relay/chat/CONTRACT.md` §v2.0):
+
+- **Two-layer storage** — every message is appended to a thread log (`relay/chat/threads/<thread_id>/messages.jsonl`, the source of truth) *and* delivered to the recipient mailbox (`to-<addr>/pending/`), so v1 receivers work unchanged.
+- **Cursors** — `relay/runtime/cursors/<session>.json` tracks read positions per thread; advanced via `chat_read.py --mark` (hook auto-advance is host-project work).
+- **Presence & budget & mute** — `presence.json` (schema), a persisted per-thread × per-session × per-day auto-reply **budget of 3** enforced via `chat_state.py --budget-check`, and a `chat-mute.json` switch that pauses auto-replies without touching history.
+- **Wake degradation (explicit, no unconditional "unread = delivered")**: an *active* session receives messages at its next hook event; an *idle* session relies on its watcher cron or the user; cross-vendor receivers (Codex / Claude Code / other CLIs) use the manual paste fallback — a digest tool renders the pending mailbox as pasteable text. The relay never promises push delivery to arbitrary clients.
+- The cross-vendor envelope bridge (events.db → chat v2, explicit `relay-chat` fence only) is host-project tooling, **not** part of this template.
+
 ## Repository structure
 
 ```
 SKILL.md                     # the /relay-up skill (installer: up/down modes)
 hooks/relay_hook.py          # session hook: SessionStart registration / Stop continuation
                              #   injection / UserPromptSubmit context injection (v3 marker routing)
-tools/chat_send.py           # chat-lane send CLI
+tools/chat_send.py           # chat-lane send CLI (v2: thread log + mailbox dual write)
+tools/chat_read.py           # thread viewer: threads/dump/unread/cursors/presence
+tools/chat_state.py          # shared state: cursors/presence/mute/budget (atomic, locked)
 tools/verify_report.py       # leader acceptance: 7-check verifier
 template/                    # what gets scaffolded into target projects (mailbox contracts,
                              #   worker skill, bootstrap card example, empty runtime skeletons)
-tests/                       # stdlib-only tests (25: claim/inject/merge/dedupe/quarantine/
-                             #   gating/fail-open/multi-project routing)
+tests/                       # stdlib-only tests (claim/inject/merge/dedupe/quarantine/
+                             #   gating/fail-open/multi-project routing + chat v2 suites)
 check_template.py            # template integrity self-check
 ```
 
