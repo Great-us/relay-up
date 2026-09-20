@@ -4,13 +4,13 @@
 
 **[简体中文](README.zh-CN.md) | English**
 
-**One leader, multiple workers, multiple models — a fully automated task relay between Kimi Code sessions, with push-first delivery.** Type `/relay-up` in any project to install it. The leader dispatches task cards and chat messages; delivery is **push** — they go straight into the worker's live session through the Kimi Code local server (`kimi web`), and the worker starts executing immediately, no cron polling, no waiting. The file layer (mailbox + thread logs) remains the auditable source of truth, and every push degrades gracefully to the watcher-cron path when no server is reachable.
+**A cost-efficient multi-agent team for Kimi Code: your expensive model plays leader — deciding, dispatching, and accepting work — while cheap models play workers that execute inside their own sessions.** Type `/relay-up` in any project to install it. Coordination is **push**: task cards and chat messages go straight into the worker's live session through the Kimi Code local server (`kimi web`), so the worker starts executing immediately — no cron polling, no waiting, and an idle worker burns zero tokens. The file layer (mailbox + thread logs) remains the auditable source of truth, and every push degrades gracefully to the watcher-cron path when no server is reachable.
 
 > Born out of real-world TASK-010/011 work: the entire chain (event hooks → file mailbox → scheduled wake-ups → acceptance & archival) was verified end-to-end with live sessions on a Windows machine, including verbatim hash-checked round trips. The new push lane was probe-verified against the live server: create session → push → model replied PONG-OK → archive.
 
 ## The problem it solves
 
-You have several Kimi Code sessions open (terminal windows or `kimi web`), each running a different model (an expensive one as the leader, cheap ones as workers). Making them collaborate normally means copy-pasting between windows by hand. Session Relay turns *dispatch → execute → report → review → dispatch* into a fully automated loop:
+One strong model doing everything is expensive: every refactor, every file crawl, every mechanical check burns premium tokens. But you don't need premium intelligence for *execution* — you need it for *decisions*. Session Relay splits the two: **the expensive model plays leader** — breaking down the project, dispatching task cards, and accepting reports — while **cheap models play workers** that execute inside their own sessions, like employees on a team. The expensive tokens go only where they pay off; the cheap ones do the bulk of the work. And instead of copy-pasting between windows, *dispatch → execute → report → review → dispatch* becomes a fully automated loop:
 
 ```
 Leader session (any model)
@@ -93,6 +93,22 @@ body-sha256: <body 的 UTF-8 SHA256 hex>
    Without hooks everything still works — push delivery, manual `/relay-next` and the worker watcher cron only need the local server / plain file I/O. Since v3, one registration serves **all** projects: the hook routes by the `relay/relay.enabled` marker that `/relay-up` writes.
 3. **Enable** — type `/relay-up` in any project's Kimi Code session (disable: `/relay-up down`).
 4. **Open worker windows** — start a Kimi Code session on a cheap model, send it any one message to wake it, then hand it the bootstrap card from `template/relay/bootstrap-card.example.json` (it installs its own watcher cron and backfills `roles.json` with its session identity; the hook keeps `presence.json` / `session-registry.jsonl` current from then on). Once registered, task chats and messages reach it **instantly by push**; the 5-minute watcher cron stays installed as the no-server fallback. **Or skip the window entirely**: `python tools/relay_spawn.py --root <root> --role employee-2 [--model kimi-code/kimi-for-coding-highspeed]` spawns a server-managed worker on the spot (measured protocol, see `template/relay/chat/CONTRACT.md` §员工会话 spawn 协议).
+
+## Why it's token-efficient
+
+Multi-agent setups usually waste money in three places. Session Relay is built to waste none:
+
+- **Expensive tokens only buy decisions.** The leader's model plans, dispatches, and arbitrates — nothing else. The 7-check acceptance is run by `tools/verify_report.py`, a **script**: the leader model reads a PASS/FAIL verdict instead of paying premium tokens to re-verify work mechanically.
+- **Workers run on cheap models.** `relay_spawn.py --model kimi-code/kimi-for-coding-highspeed` puts the bulk-execution token spend on the inexpensive tier; the card's quality bar is enforced by the hash-and-contract lane, not by the worker's price.
+- **Idle means zero.** There is no watcher cron burning a turn every N minutes "just to check". A worker with an empty queue consumes nothing until the next push arrives; `SHUTDOWN` archives its session and leaves no timers behind.
+
+## Positioning: how it differs from similar tools
+
+- **vs `firstintent/ccteam`** (turn your coding agents into one team, steered from Telegram/Lark): ccteam is a cross-vendor message bus. Session Relay is **Kimi-native deep integration** — instant `kimi web` server push, a measured spawn protocol, and a hash-verified file contract, with zero external services inside the ecosystem it serves.
+- **vs `xvirobotics/metabot`** (supervised, self-evolving agent organization): metabot is organization-grade infrastructure (server, accounts, comm bus). Session Relay is a **plain-file contract + local server API** — auditable with `cat`, runnable entirely on one machine.
+- **vs the official `tower` multi-agent mode** (experimental, inside the Kimi web UI): tower is a closed, all-in-one feature. Session Relay drives the **public** server API, so the leader can sit in a TUI or the browser, the mechanism and contracts are fully open source, and every step leaves a file audit trail.
+
+In one line: **heterogeneous-model division of labor + zero idle burn + end-to-end auditability**.
 
 ## Safety design (why it's safe to leave unattended)
 

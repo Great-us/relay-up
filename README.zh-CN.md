@@ -4,13 +4,13 @@
 
 **[English](README.md) | 简体中文**
 
-**一个领导，多个员工，多个模型——Kimi Code 会话间的全自动任务中继，推送直达。** 在任意项目敲 `/relay-up` 即装。领导派发任务卡与 chat 消息；送达走**推送**——经 Kimi Code 本机服务器（`kimi web`）直接注入员工存活会话，员工立即开轮执行，不等 cron 轮询。文件层（信箱 + 线程日志）仍是可审计的事实源；无服务器可达时，每次推送自动降级回值班 cron 路径。
+**Kimi Code 的省 token 多智能体分工方案：贵模型当领导——做决策、派工、验收；便宜模型当员工——在自己的会话里执行。** 在任意项目敲 `/relay-up` 即装。协同走**推送**：任务卡与 chat 消息经 Kimi Code 本机服务器（`kimi web`）直接注入员工存活会话，员工立即开轮执行——不等 cron 轮询、不空等，且员工空闲时 **token 零消耗**。文件层（信箱 + 线程日志）仍是可审计的事实源；无服务器可达时，每次推送自动降级回值班 cron 路径。
 
 > 源自 Model Relay 项目 TASK-010/011 的实战：在一台 Windows 机器上用真实会话端到端验证了整条链路（事件 hook → 文件信箱 → 定时唤醒 → 验收归档），原文往返逐字哈希核对通过。新的推送车道已经过本机服务器实测探针：建会话 → 推送 → 模型回 PONG-OK → 归档。
 
 ## 它解决什么问题
 
-你在 Kimi Code 里开了好几个会话（终端窗口或 `kimi web`），不同模型：贵的当领导、便宜的当员工。让它们协作 ordinarily 要靠你人工复制粘贴。Session Relay 把“派工 → 执行 → 回报 → 审阅 → 再派工”变成全自动：
+一个强模型包办一切太贵：每次重构、每次翻代码、每次机械核验烧的都是高价 token。但执行不需要顶级智能——需要顶级智能的是**决策**。Session Relay 把两者拆开：**贵模型当领导**——拆解项目、派发任务卡、验收回报；**便宜模型当员工**——在自己的会话里干活，像团队里的员工一样。贵价 token 只花在刀刃上，便宜 token 干大部分的活。而"派工 → 执行 → 回报 → 审阅 → 再派工"不再是人工复制粘贴，变成全自动循环：
 
 ```
 领导会话（任意模型）
@@ -93,6 +93,22 @@ body-sha256: <body 的 UTF-8 SHA256 hex>
    未注册也不影响使用：推送送达、手动 `/relay-next` 与员工值班 cron 三条路径只依赖本机服务器 / 文件读写。v3 起**一份注册服务所有项目**——hook 按 `/relay-up` 写入的 `relay/relay.enabled` 标记自动路由。
 3. **启用**：在任意项目的 Kimi Code 会话敲 `/relay-up`（撤除：`/relay-up down`）。
 4. **开员工窗**：新开 Kimi Code 会话选个便宜模型，发任意一条消息唤醒，再按 `template/relay/bootstrap-card.example.json` 给它自举卡（装值班 cron、把自身会话身份回填进 `roles.json`；此后 hook 持续维护 `presence.json` / `session-registry.jsonl`）。登记后任务与消息**经推送即时直达**；5 分钟值班 cron 保留作无服务器兜底。**也可以不开窗**：`python tools/relay_spawn.py --root <根> --role employee-2 [--model kimi-code/kimi-for-coding-highspeed]` 直接现场 spawn server 托管员工（协议经实测，见 `template/relay/chat/CONTRACT.md` §员工会话 spawn 协议）。
+
+## 为什么省 token
+
+多智能体方案通常在三处烧钱，Session Relay 一处都不烧：
+
+- **贵价 token 只买决策。** 领导模型只负责规划、派工、裁定，别的都不干。七项验收由 `tools/verify_report.py` **脚本机械执行**——领导模型读的是 PASS/FAIL 结论，不用为贵价 token 重新机械核验。
+- **员工跑便宜模型。** `relay_spawn.py --model kimi-code/kimi-for-coding-highspeed` 把大体力的执行花在便宜档位上；任务卡的质量底线由哈希+合同车道把守，与员工模型贵贱无关。
+- **空闲即零消耗。** 没有"每 N 分钟查一次信箱"的值班 cron 空转烧 token。队列空了的员工不消耗任何东西，直到下一次推送到达；`SHUTDOWN` 归档其会话，不留任何后台计时器。
+
+## 定位：与同类方案的区别
+
+- **对比 `firstintent/ccteam`**（把编程 agent 编成团队，Telegram/飞书指挥）：ccteam 是跨厂商消息总线；Session Relay 是 **Kimi 原生深度集成**——`kimi web` 服务端直推秒达、经实测的 spawn 协议、哈希核验文件合同，服务的生态内零外部依赖。
+- **对比 `xvirobotics/metabot`**（受监督、自我进化的 agent 组织）：metabot 是组织级基建（服务端、账号、通信总线）；Session Relay 是**纯文件合同 + 本机 server API**——`cat` 即可审计，单机即可跑通。
+- **对比官方 `tower` 多智能体模式**（实验中，位于 Kimi Web 版内）：tower 是封闭的一体化功能；Session Relay 驱动**公开** server API，领导可以在 TUI 或浏览器里，机制与合同全开源，每一步都留文件审计痕。
+
+一句话：**异构模型分工 + 空闲零消耗 + 全链路可审计**。
 
 ## 安全设计（为什么敢让它无人值守）
 
